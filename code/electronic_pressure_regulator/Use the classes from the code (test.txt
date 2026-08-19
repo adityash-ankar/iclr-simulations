@@ -1,0 +1,12 @@
+# Use the classes from the code (tested w airborne)
+#
+# Notes: informal test file listing ideas for running the package. This
+# text file documents usage tips and should not be executed as Python.
+# Keep it as human-readable notes only.
+Use the classes from the code (tested w airborne)
+
+Make your own holder class for tanks,
+
+For initial model, start off w N2 tank at 300bar, use dynamic orifice (set to static initially), run a tank depletion model for a sample feed system, 
+
+As time dependency is happening, monitor whatever you need, (input into control system)
