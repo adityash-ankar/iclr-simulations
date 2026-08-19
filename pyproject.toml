@@ -1,0 +1,29 @@
+[project]
+name = "iclr_simulations"
+version = "0.0.1"
+description = "Contains internal development code for Imperial College London Rocketry Simulations"
+readme = "README.md"
+authors = [
+  { name = "Anonymous" },
+]
+license = {text = "MIT License"}
+classifiers = [
+    "Programming Language :: Python :: 3.10.0",
+]
+requires-python = "==3.10.0"
+dependencies = [
+    "ipywidgets>=8.1.5",
+    "ipykernel>=6.29.5",
+    "nbstripout>=0.8.1",
+    "pre-commit-hooks>=5.0.0",
+    "pre-commit>=4.0.1",
+    "ruff>=0.8.4",
+    "toml>=0.10.2",
+    "loguru>=0.7.2",
+    "nbclient>=0.10.2",
+    "pandas>=2.2.3",
+]
+
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
