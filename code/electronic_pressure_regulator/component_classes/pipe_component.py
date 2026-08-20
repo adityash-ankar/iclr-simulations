@@ -9,15 +9,14 @@ u_iterate (velocity estimate). The computationally intensive core is
 JIT-compiled to improve loop performance inside FeedSystemCriticalPath.
 """
 
-import numpy as np
-from numba import njit
-from pyfluids import Fluid, Input
-from scipy.optimize import root_scalar
-from util_funcs import *
-
+import numpy as np  # noqa: I001
 from component_classes.system_component import (
     systemComponentJIT,
 )
+from numba import njit
+from pyfluids import Fluid
+from scipy.optimize import root_scalar
+from util_funcs import calculate_friction_factor, clamp_value, darcy_weisbach_jit, reynolds_number_jit
 
 
 class PipeJIT(systemComponentJIT):
@@ -31,8 +30,9 @@ class PipeJIT(systemComponentJIT):
     Intended for use as the basic discretised element inside
     FeedSystemCriticalPath.
     """
-    def __init__(self, fluid: Fluid=None, length=1.0, diameter=0.1, roughness=0.0001, location=0, pos=None,
-                 pressureIn=0, pressureOut=0, temp=None, rho=None, mdot=None):
+    def __init__(self, fluid: Fluid | None = None, length: float = 1.0, diameter: float = 0.1,
+                 roughness: float = 0.0001, location: int = 0, pos=None,
+                 pressureIn: float = 0.0, pressureOut: float = 0.0, temp=None, rho=None, mdot=None):
         """Initialise a pipe element with geometry and per-cell state.
 
         Parameters
@@ -69,7 +69,39 @@ class PipeJIT(systemComponentJIT):
                         length=length, pos=pos, temp=temp, fluid=fluid, rho=rho, mdot=mdot)
         self.diameter = diameter
         self.roughness = roughness
+        self.cross_section_area = np.pi * (self.diameter / 2.0) ** 2
         self.Re: float = 0.0
+        self.sound_speed = None
+        self.viscosity = None
+
+    def update_fluid_properties(self, pressure=None, temperature=None):
+        """Refresh and cache fluid properties once per solver update.
+
+        Parameters
+        ----------
+        pressure : float or None, optional
+            Pressure in pascals to use for the property refresh.
+        temperature : float or None, optional
+            Temperature in Celsius for the configured pyFluids units system.
+
+        Returns
+        -------
+        tuple
+            Density, sound speed, and dynamic viscosity in the current fluid state.
+        """
+        if pressure is None:
+            pressure = self.pressureIn
+        if temperature is None:
+            temperature = self.temp
+
+        if self.fluid is not None:
+            self._sync_fluid_state(pressure, temperature)
+            self.rho = float(self.fluid.density or 0.0)
+            self.viscosity = float(self.fluid.dynamic_viscosity or 0.0)
+            self.sound_speed = float(self.fluid.sound_speed or 0.0)
+            self.temp = float(self.fluid.temperature or 0.0)
+
+        return self.rho, self.sound_speed, self.viscosity
 
     def getVelocity(self, mdot=None):
         """Convert mass flow into a representative flow speed for this pipe segment."""
@@ -77,8 +109,7 @@ class PipeJIT(systemComponentJIT):
             mdot = self.mdot
         if self.rho is None or mdot is None:
             raise ValueError("Density and mass flow rate must be set before calculating velocity.")
-        area = np.pi * (self.diameter / 2) ** 2
-        self.u_iterate = mdot / (self.rho * area)
+        self.u_iterate = mdot / (self.rho * self.cross_section_area)
         return self.u_iterate
 
     def solve_jit(self, prevVelocity, nextPressure, dt):
@@ -98,29 +129,26 @@ class PipeJIT(systemComponentJIT):
         None
             Updates the pipe's pressure, velocity, and mass-flow state in place.
         """
-        self.fluid.update(Input.temperature(self.temp), Input.pressure(self.pressureIn))
-        rho = self.fluid.density
-        sound_speed = self.fluid.sound_speed
-        viscosity = self.fluid.dynamic_viscosity
+        pressure_in = max(float(self.pressureIn), 1e3)
+        next_pressure = max(float(nextPressure), 1e3)
+        u_in = self.uIn if self.uIn is not None else 0.0
+        u_out = self.uOut if self.uOut is not None else 0.0
+        rho, sound_speed, viscosity = self.update_fluid_properties(pressure_in, self.temp)
 
         new_pressure, new_velocity, new_mdot = self._solve_numerical_jit(
-            self.pressureIn, self.u_iterate, nextPressure,
-            rho, sound_speed, viscosity, self.uOut if self.uOut else 0, self.uIn if self.uIn else 0,
+            pressure_in, self.u_iterate, next_pressure,
+            rho, sound_speed, viscosity, u_out, u_in,
             self.length, self.diameter, self.roughness, dt
         )
 
-        self.pressureIn = new_pressure
+        self.pressureIn = max(float(new_pressure), 1e3)
         self.u_iterate = new_velocity
         self.mdot = new_mdot
         self.rho = rho
 
-        if self.fluid:
+        if self.fluid is not None:
             try:
-                self.fluid.update(Input.pressure(self.pressureIn), Input.temperature(self.temp))
-                self.temp = self.fluid.temperature
-                self.rho = self.fluid.density
-                self.viscosity = self.fluid.dynamic_viscosity
-
+                self.update_fluid_properties(self.pressureIn, self.temp)
             except Exception as exc:
                 raise ValueError("Failed to update fluid state. Ensure fluid properties are set correctly.") from exc
 
@@ -162,7 +190,11 @@ class PipeJIT(systemComponentJIT):
         tuple
             Updated pressure, velocity, and mass flow rate.
         """
-        damping_factor = 1
+        damping_factor = 0.2
+        pressure_floor = 1e3
+        pressure_cap = 1e8
+        pressure_in = max(float(pressure_in), pressure_floor)
+        next_pressure = max(float(next_pressure), pressure_floor)
 
         du_dx = (u_out - u_in) / length
         dp_dx = (next_pressure - pressure_in) / length
@@ -178,6 +210,9 @@ class PipeJIT(systemComponentJIT):
 
         new_pressure = pressure_in + damping_factor * dpdt * dt
         new_velocity = velocity + damping_factor * dudt * dt
+
+        new_pressure = clamp_value(float(new_pressure), pressure_floor, pressure_cap)
+        new_velocity = clamp_value(new_velocity, -1000.0, 1000.0)
 
         area = np.pi * (diameter / 2)**2
         new_mdot = rho * new_velocity * area
@@ -208,9 +243,9 @@ class PipeJIT(systemComponentJIT):
 
         self.mdot = mdot
 
-        self.fluid.update(Input.pressure(pressureIn), Input.temperature(self.temp))
-        self.rho = self.fluid.density
-        viscosity = self.fluid.dynamic_viscosity
+        self.update_fluid_properties(pressureIn, self.temp)
+        self.rho = float(self.rho)
+        viscosity = self.viscosity
 
         velocity = mdot / (self.rho * np.pi * (self.diameter / 2) ** 2)
         re = reynolds_number_jit(self.rho, velocity, self.diameter, viscosity)
@@ -234,7 +269,7 @@ class PipeJIT(systemComponentJIT):
         """
         self.mdot = self.u_iterate * self.rho * np.pi * (self.diameter / 2) ** 2
 
-    def solveMdot(self, inletPressure=None, outletPressure=None):
+    def solveMdot(self, inletPressure: float | None = None, outletPressure: float | None = None):
         """Solve for the pipe mass flow that matches the target pressure differential.
 
         Parameters
@@ -254,21 +289,66 @@ class PipeJIT(systemComponentJIT):
         if outletPressure is None:
             outletPressure = self.pressureOut
 
-        dpTarget = inletPressure - outletPressure
+        if inletPressure is None:
+            inlet_pressure = float(self.pressureIn or 0.0)
+        else:
+            inlet_pressure = float(inletPressure)
+        if outletPressure is None:
+            outlet_pressure = float(self.pressureOut or 0.0)
+        else:
+            outlet_pressure = float(outletPressure)
 
-        def dpFunc(mdot):
-            return self.dp(mdot=mdot) - dpTarget
+        dpTarget = abs(inlet_pressure - outlet_pressure)
+        if dpTarget <= 0.0:
+            self.mdot = 0.0
+            return
 
-        brackets_to_try = [[-1, 1], [-10, 10], [-100, 100], [-0.1, 0.1], [0.001, 10], [-10, 0.001]]
+        direction = 1.0 if inlet_pressure >= outlet_pressure else -1.0
 
+        def dpFunc(mdot_mag):
+            mdot_mag = float(mdot_mag)
+            if not np.isfinite(mdot_mag) or mdot_mag <= 0.0:
+                return 1e30
+            return self.dp(mdot=mdot_mag) - dpTarget
+
+        brackets_to_try = [[1e-9, 1e-3], [1e-4, 1e-1], [1e-3, 1.0], [1e-2, 10.0], [1e-2, 100.0], [1e-3, 1000.0]]
+
+        root_value: float | None = None
         result = None
         for bracket in brackets_to_try:
             try:
-                result = root_scalar(dpFunc, bracket=bracket, method='brentq')
-                self.mdot = result.root
-                break
-            except Exception:
-                raise ValueError(f"Failed to solve for mass flow rate in bracket {bracket}")
+                lo, hi = bracket
+                f_lo = dpFunc(lo)
+                f_hi = dpFunc(hi)
+                if not np.isfinite(f_lo) or not np.isfinite(f_hi):
+                    continue
+                if f_lo == 0.0:
+                    root_value = float(lo)
+                    break
+                if f_hi == 0.0:
+                    root_value = float(hi)
+                    break
+                if f_lo * f_hi < 0:
+                    result = root_scalar(dpFunc, bracket=bracket, method='brentq')
+                    if result is not None and result.converged:
+                        root_value = float(result.root)
+                        break
+            except ValueError:
+                continue
+
+        if root_value is None:
+            candidates = np.geomspace(1e-9, 1e3, 400)
+            best_value = None
+            best_mdot = 0.0
+            for cand in candidates:
+                val = abs(dpFunc(cand))
+                if best_value is None or val < best_value:
+                    best_value = val
+                    best_mdot = float(cand)
+            self.mdot = direction * best_mdot
+            return
+
+        self.mdot = direction * root_value
 
     def solve(self, prevVelocity, nextPressure, dt):
         """Compatibility wrapper that delegates to the JIT-based solver."""

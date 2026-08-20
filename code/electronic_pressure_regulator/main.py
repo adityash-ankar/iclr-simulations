@@ -1,4 +1,3 @@
-
 """
 Main runner for the electronic_pressure_regulator package.
 
@@ -14,12 +13,12 @@ Use this script to validate and profile the package on small test cases.
 """
 
 import numpy as np
-from pyfluids import Fluid, FluidsList, Input
-
-from .component_classes.feed_system_critical_path import (
+from component_classes.ereg_component import EregJIT
+from component_classes.feed_system_critical_path import (
     FeedSystemCriticalPath,
 )
-from .util_funcs import *
+from pyfluids import Fluid, FluidsList, Input
+from util_funcs import *
 
 
 def barA(pa):
@@ -43,13 +42,34 @@ if __name__ == "__main__":
     print("Note: First iteration may be slow due to JIT compilation")
 
     # Example usage with JIT optimization
-    fluid = Fluid(FluidsList.NitrousOxide)
-    fluid.update(Input.temperature(-5), Input.pressure(barA(200)))
-    simTime = 10  # s
-    timeIterations = 100
+    fluid = Fluid(FluidsList.Nitrogen)
+    # PyFluids' configured unit system uses Celsius for temperature inputs.
+    fluid.update(Input.temperature(-5), Input.pressure(barA(300)))
+    simTime = 1  # s
 
-    feed_system = FeedSystemCriticalPath(dt=0.001, totalPipeLength=9.0, fluid=fluid, N=100, mdot=2.3,
-                                        inletPressure=barA(100), outletPressure=barA(25))
+
+    ereg_setpoint = 250
+
+    feed_system = FeedSystemCriticalPath(dt=1e-2, totalPipeLength=  0.5, fluid=fluid, N=5, mdot=2.0,
+                                        inletPressure=barA(300), outletPressure=barA(200))
+
+
+    ereg = EregJIT(
+        fluid=fluid,
+        location=2,
+        pt_location=2,
+        pos=2 * feed_system.dL,
+        pressureIn=feed_system.discretisedFeed[1].getPressureOut(),
+        pressureOut=barA(ereg_setpoint),
+        temp=feed_system.initTemp,
+        mdot=2.0,
+        ID=0.035,
+        CdA=194e-6,
+        type="e",
+    )
+
+    # Replace the second pipe with the regulator.
+    feed_system.discretisedFeed[2] = ereg
 
     dL = feed_system.dL
     initial_velocity = feed_system.discretisedFeed[1].getVelocity()
@@ -58,8 +78,8 @@ if __name__ == "__main__":
     # Proper CFL condition: dt < dx / (|u| + a)
     cfl_dt = dL / (abs(initial_velocity) + sound_speed)
 
-    # Use a much more conservative safety factor
-    dt = 0.3 * cfl_dt  # fuck being conservative
+    # Use a more conservative explicit-step safety factor to keep the transient update bounded.
+    dt = 0.4 * cfl_dt
     feed_system.dt = dt
     timeIterations = int(simTime / dt)
     feed_system.setMaxIterations(timeIterations + 100)

@@ -11,14 +11,14 @@ to write CSVs or extract per-cell data for post-processing.
 
 import csv
 import os
-from typing import Optional
+from typing import cast
 
 import numpy as np
 from component_classes.ghost_cell import ghostCellJIT
 from component_classes.orifice_component import OrificeJIT
 from component_classes.pipe_component import PipeJIT
 from pyfluids import Fluid, Input
-from scipy.optimize import fsolve, root_scalar
+from scipy.optimize import root_scalar
 from util_funcs import *
 
 
@@ -38,8 +38,10 @@ class FeedSystemCriticalPath:
     mdot_history, velocity_history) which can be written to CSV via
     write_to_csv or queried per-cell with get_cell_data.
     """
-    def __init__(self, dt=1, totalPipeLength=1.0, fluid: Fluid=None, N=2, extraComponents=[[None,None],[None,None]],
-                 mdot: float = None, inletPressure: float = None, outletPressure: float = None, max_iterations=100000):
+    def __init__(self, dt: float = 1, totalPipeLength: float = 1.0, fluid: Fluid | None = None,
+                 N: int = 2, extraComponents: list[list[float | None]] | None = None,
+                 mdot: float | None = None, inletPressure: float | None = None, outletPressure: float | None = None,
+                 max_iterations: int = 100000, mdot_update_interval: int = 10):
         """Create the discretized feed system and initialize the pressure history arrays.
 
         Parameters
@@ -68,24 +70,40 @@ class FeedSystemCriticalPath:
         None
             Initializes the discretized feed-system model and preallocates history buffers.
         """
+        if fluid is None:
+            raise ValueError("A pyfluids Fluid instance is required to initialize FeedSystemCriticalPath.")
+        if N <= 0:
+            raise ValueError("N must be positive.")
+        if totalPipeLength <= 0:
+            raise ValueError("totalPipeLength must be positive.")
+        if dt <= 0:
+            raise ValueError("dt must be positive.")
+
         self.N = N
         self.dL = totalPipeLength / N
         self.totalPipeLength = totalPipeLength
-        self.inletPressure = inletPressure
-        self.outletPressure = outletPressure
+        self.inletPressure = 100e5 if inletPressure is None else float(inletPressure)
+        self.outletPressure = 80e5 if outletPressure is None else float(outletPressure)
+        if extraComponents is None:
+            extraComponents = [[None, None], [None, None]]
         self.extraComponents = extraComponents
         self.fluid = fluid
-        self.mdot = mdot
-        self.dt = dt
+        self.mdot = 1.0 if mdot is None else float(mdot)
+        self.dt = float(dt)
         self.max_iterations = max_iterations
+        self.mdot_update_interval = int(mdot_update_interval)
         self.current_iteration = 0
         self.rampStartCDA = 194e-6  # Initial CdA value
         self.pressure_history = np.zeros((N + 3, max_iterations))
         self.temp_history = np.zeros((N + 3, max_iterations))
         self.mdot_history = np.zeros((N + 3, max_iterations))
         self.velocity_history = np.zeros((N + 3, max_iterations))
-        fluid.update(Input.temperature(-180), Input.pressure(inletPressure))
-        self.initTemp = fluid.temperature
+
+        # PyFluids is configured for SIWithCelsiusAndPercents, so temperature inputs are
+        # interpreted in degrees Celsius and converted internally to SI.
+        self.initTemp = -180.0
+        self.fluid.update(Input.temperature(self.initTemp), Input.pressure(self.inletPressure))
+        self.initTemp = self.fluid.temperature
         self.populate()
 
     def getCDA(self):
@@ -148,26 +166,31 @@ class FeedSystemCriticalPath:
             Populates the discretised feed-system list with pipe objects.
         """
         self.discretisedFeed = []
-        check = True
+        valid_extra: list[list[float]] = []
         for comp in self.extraComponents:
-            if comp[0] is not None:
-                comp[1] = round(comp[1] / self.dL)
-                check = True
-            else:
-                check = False
+            if not comp:
+                continue
+            component_position = comp[0]
+            component_index = comp[1]
+            if component_position is None or component_index is None:
+                continue
+            valid_extra.append([float(component_position), float(component_index)])
+        for comp in valid_extra:
+            component_index = cast(float, comp[1])
+            comp[1] = round(component_index / self.dL)
 
-        if check:
-            self.extraComponents.sort(key=lambda comp: comp[0])
+        if valid_extra:
+            valid_extra.sort(key=lambda comp: cast(float, comp[0]))
+            self.extraComponents = cast(list[list[float | None]], valid_extra)
 
         count = 0
         for i in range(self.N):
             pos = count * self.dL
-            if i in [comp[1] for comp in self.extraComponents if comp[0] is not None]:
-                pass
-            else:
-                count += 1
-                pipe = PipeJIT(fluid=self.fluid, length=self.dL, mdot=self.mdot, pos=pos,
-                              location=i+1, temp=self.initTemp, diameter=0.035)
+            if i in [int(cast(float, comp[1])) for comp in valid_extra]:
+                continue
+            count += 1
+            pipe: PipeJIT | None = PipeJIT(fluid=self.fluid, length=self.dL, mdot=self.mdot, pos=pos,
+                                          location=i + 1, temp=self.initTemp, diameter=0.035)
             self.discretisedFeed.append(pipe)
 
     def populate(self):
@@ -185,9 +208,11 @@ class FeedSystemCriticalPath:
         """
         currentPressure = self.inletPressure
         self.discretise()
-        self.discretisedFeed.append(OrificeJIT(location=self.N+1, CdA=self.rampStartCDA,fluid=self.fluid, ID=0.035, pos=self.totalPipeLength,
-                                              pressureIn=self.discretisedFeed[-1].getPressureOut(),
-                                              pressureOut=self.outletPressure, temp=self.initTemp, mdot=self.mdot, type="oe"))
+        self.discretisedFeed.append(OrificeJIT(location=self.N + 1, CdA=self.rampStartCDA, fluid=self.fluid, ID=0.035,
+                                              pos=self.totalPipeLength,
+                                              pressureIn=float(self.discretisedFeed[-1].getPressureOut()),
+                                              pressureOut=float(self.outletPressure), temp=self.initTemp,
+                                              mdot=self.mdot, type="oe"))
         self.solveMdot(self.inletPressure, self.outletPressure)
         print(self.mdot)
         for i, component in enumerate(self.discretisedFeed):
@@ -226,9 +251,10 @@ class FeedSystemCriticalPath:
         float
             Total pressure loss across the discretized system for the provided mass flow.
         """
-        return sum(comp.dp(mdot=mdot, pressureIn=self.inletPressure) for comp in self.discretisedFeed if comp.getType() != "g")
+        trial_mdot = abs(float(mdot))
+        return sum(comp.dp(mdot=trial_mdot, pressureIn=self.inletPressure) for comp in self.discretisedFeed if comp.getType() != "g")
 
-    def solveMdot(self, inletPressure: Optional[float] = None, outletPressure: Optional[float] = None):
+    def solveMdot(self, inletPressure: float | None = None, outletPressure: float | None = None):
         """Solve for the steady feed-system mass flow that balances the total pressure drop.
 
         Parameters
@@ -243,28 +269,72 @@ class FeedSystemCriticalPath:
         None
             Updates the feed-system mass flow rate in place to match the target differential pressure.
         """
-        dpTarget = inletPressure - outletPressure
+        if inletPressure is None:
+            inletPressure = self.inletPressure
+        if outletPressure is None:
+            outletPressure = self.outletPressure
 
-        def dpFunc(mdot):
-            return self.getSystemDP(mdot) - dpTarget
+        inletPressure = max(float(inletPressure), 1e3)
+        outletPressure = max(float(outletPressure), 1e3)
 
-        brackets_to_try = [[0.001, 10], [0.0001, 1], [0.01, 100], [-1, 1], [-10, 10]]
+        dpTarget = abs(float(inletPressure) - float(outletPressure))
+        if dpTarget <= 0.0:
+            self.mdot = 0.0
+            return
 
+        direction = 1.0 if float(inletPressure) >= float(outletPressure) else -1.0
+        max_mdot = 1e3
+        max_dp = self.getSystemDP(max_mdot)
+        if np.isfinite(max_dp) and max_dp < dpTarget:
+            self.mdot = direction * max_mdot
+            return
+
+        def dpFunc(mdot_mag):
+            mdot_mag = float(mdot_mag)
+            if not np.isfinite(mdot_mag) or mdot_mag <= 0.0:
+                return 1e30
+            return self.getSystemDP(mdot_mag) - dpTarget
+
+        brackets_to_try = [[1e-9, 1e-3], [1e-4, 1e-1], [1e-3, 1.0], [1e-2, 10.0], [1e-2, 100.0], [1e-3, 1000.0]]
+
+        root_value: float | None = None
         result = None
         for bracket in brackets_to_try:
             try:
-                result = root_scalar(dpFunc, bracket=bracket, method='brentq')
-                self.mdot = result.root
-                break
-            except Exception:
+                lo, hi = bracket
+                f_lo = dpFunc(lo)
+                f_hi = dpFunc(hi)
+                if not np.isfinite(f_lo) or not np.isfinite(f_hi):
+                    continue
+                if f_lo == 0.0:
+                    root_value = float(lo)
+                    break
+                if f_hi == 0.0:
+                    root_value = float(hi)
+                    break
+                if f_lo * f_hi < 0:
+                    result = root_scalar(dpFunc, bracket=bracket, method='brentq')
+                    if result is not None and result.converged:
+                        root_value = float(result.root)
+                        break
+            except ValueError:
                 continue
 
-        if result is None:
-            try:
-                result = fsolve(dpFunc, 1.0)[0]
-                self.mdot = result
-            except Exception as exc:
-                raise ValueError("Failed to solve for mass flow rate with any method.") from exc
+        if root_value is None:
+            candidates = np.geomspace(1e-9, 1e3, 400)
+            best_value = None
+            best_mdot = 0.0
+            for cand in candidates:
+                val = abs(dpFunc(cand))
+                if best_value is None or val < best_value:
+                    best_value = val
+                    best_mdot = float(cand)
+            if best_value is None:
+                raise ValueError("Failed to solve for mass flow rate with any method.")
+            self.mdot = direction * best_mdot
+            return
+
+        self.mdot = direction * root_value
 
     def boundaryPopulation(self):
         """Initialize the ghost-cell boundary velocities from the adjacent physical states.
@@ -306,55 +376,60 @@ class FeedSystemCriticalPath:
         None
             Updates the full transient state of the feed system and records the new history point.
         """
-        self.discretisedFeed[0].setPressureIn(self.inletPressure)
+        feed = self.discretisedFeed
+        feed[0].setPressureIn(self.inletPressure)
 
-        for i, component in enumerate(self.discretisedFeed):
+        for i, component in enumerate(feed):
             if component.type == "g":
-                component: ghostCellJIT
+                ghost = component
                 if i == 0:
-                    component.setPressureIn(self.inletPressure)
-                    component.setPressureOut(self.inletPressure)
-                    component.setuIn(self.discretisedFeed[i+1].getuIn())
-                    component.setuOut(self.discretisedFeed[i+1].getuIn())
-                    component.set_u_iterate(self.discretisedFeed[i+1].get_u_iterate())
-                elif i == len(self.discretisedFeed) - 1:
-                    component.setPressureIn(self.outletPressure)
-                    component.setPressureOut(self.outletPressure)
-                    component.setuIn(self.discretisedFeed[i-1].getuOut())
-                    component.setuOut(self.discretisedFeed[i-1].getuOut())
-                    component.set_u_iterate(self.discretisedFeed[i-1].get_u_iterate())
+                    ghost.setPressureIn(self.inletPressure)
+                    ghost.setPressureOut(self.inletPressure)
+                    ghost.setuIn(feed[i + 1].getuIn())
+                    ghost.setuOut(feed[i + 1].getuIn())
+                    ghost.set_u_iterate(feed[i + 1].get_u_iterate())
+                elif i == len(feed) - 1:
+                    ghost.setPressureIn(self.outletPressure)
+                    ghost.setPressureOut(self.outletPressure)
+                    ghost.setuIn(feed[i - 1].getuOut())
+                    ghost.setuOut(feed[i - 1].getuOut())
+                    ghost.set_u_iterate(feed[i - 1].get_u_iterate())
                 continue
 
-            if component.type == "oe":
-                component: OrificeJIT
-                component.solve(self.discretisedFeed[i-1].getPressureOut(), prevCell=self.discretisedFeed[i-1])
+            if component.type == "e":
+                ereg = component
+                ereg.solve(feed[i - 1].getPressureOut(), feed[i + 1], feed[i - 1])
+                self.upWinding(ereg, feed[i - 1], feed[i + 1])
+            elif component.type == "oe":
+                orifice = component
+                orifice.solve(feed[i - 1].getPressureOut(), prevCell=feed[i - 1])
             elif component.type == "o":
-                component: OrificeJIT
-                component.solve(self.discretisedFeed[i-1].getPressureOut(), self.discretisedFeed[i+1])
-                self.upWinding(component, self.discretisedFeed[i-1], self.discretisedFeed[i+1])
+                orifice = component
+                orifice.solve(feed[i - 1].getPressureOut(), feed[i + 1])
+                self.upWinding(orifice, feed[i - 1], feed[i + 1])
             else:
-                component: PipeJIT
-                prev_pressure = self.discretisedFeed[i-1].getPressureIn() if i > 0 else self.inletPressure
-                next_pressure = self.discretisedFeed[i+1].getPressureIn() if i < len(self.discretisedFeed) - 1 else self.outletPressure
-                prev_velocity = self.discretisedFeed[i-1].get_u_iterate() if i > 0 else 0
+                pipe = component
+                prev_velocity = feed[i - 1].get_u_iterate() if i > 0 else 0.0
+                next_pressure = feed[i + 1].getPressureIn() if i < len(feed) - 1 else self.outletPressure
+                pipe.solve_jit(prev_velocity, next_pressure, self.dt)
+                self.upWinding(pipe, feed[i - 1], feed[i + 1])
 
-                component.solve_jit(prev_velocity, next_pressure, self.dt)
-                self.upWinding(component, self.discretisedFeed[i-1], self.discretisedFeed[i+1])
-
-        for i, component in enumerate(self.discretisedFeed):
+        for i, component in enumerate(feed):
             if component.type == "g":
                 continue
 
-            if component.type == "oe":
-                component.solveMdot(inletPressure=self.discretisedFeed[i-1].getPressureOut())
+            if component.type in ("e", "oe"):
+                component.solveMdot(inletPressure=feed[i - 1].getPressureOut())
             else:
                 component.solveMdotIter()
             component.record_to_arrays_jit(self.pressure_history, self.temp_history,
                                           self.mdot_history, self.velocity_history,
                                           self.current_iteration)
-        self.solveMdot(self.inletPressure, self.outletPressure)
 
-        self.discretisedFeed[-2].velfromMdot(mdot=self.mdot, rho=self.discretisedFeed[-2].getFluid().density)
+        if self.current_iteration % self.mdot_update_interval == 0:
+            self.solveMdot(self.inletPressure, self.outletPressure)
+
+        feed[-2].velfromMdot(mdot=self.mdot, rho=feed[-2].getFluid().density)
         self.current_iteration += 1
 
     def upWinding(self, current, previous, next):
@@ -498,8 +573,8 @@ class FeedSystemCriticalPath:
 
             avg_pressure = (self.inletPressure + self.outletPressure) / 2
             self.fluid.update(Input.pressure(avg_pressure), Input.temperature(self.initTemp))
-            sound_speed = self.fluid.sound_speed
-            theoretical_frequency = sound_speed / (4 * self.totalPipeLength)
+            sound_speed = float(self.fluid.sound_speed or 0.0)
+            theoretical_frequency = sound_speed / (4.0 * self.totalPipeLength)
 
             writer.writerow(['Average_Pressure', avg_pressure, 'Pa'])
             writer.writerow(['Sound_Speed', sound_speed, 'm/s'])

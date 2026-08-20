@@ -10,6 +10,8 @@ The class provides small helper methods for recording time-history arrays
 that the higher-level FeedSystemCriticalPath controller uses.
 """
 
+import math
+
 from pyfluids import Fluid, Input
 from util_funcs import *
 
@@ -78,6 +80,39 @@ class systemComponentJIT:
         self.uIn = None
         self.uOut = None
         self.u_iterate = None
+        self._fluid_pressure_cache = None
+        self._fluid_temp_cache = None
+
+    def _sync_fluid_state(self, pressure=None, temperature=None):
+        """Update the attached pyfluids state only when the pressure/temperature values are valid and changed."""
+        if self.fluid is None:
+            return
+        if pressure is None:
+            pressure = self.pressureIn
+        if temperature is None:
+            temperature = self.temp
+
+        pressure = float(pressure)
+        temperature = float(temperature)
+
+        if not math.isfinite(pressure):
+            pressure = 1e5
+        if not math.isfinite(temperature):
+            temperature = 0.0
+
+        # Keep the transient update in a region that pyfluids can evaluate reliably.
+        pressure = max(pressure, 1e5)
+        temperature = max(min(temperature, 200.0), -250.0)
+
+        if self._fluid_pressure_cache != pressure or self._fluid_temp_cache != temperature:
+            try:
+                self.fluid.update(Input.temperature(temperature), Input.pressure(pressure))
+            except ValueError:
+                # A transient overshoot can push the fluid state outside a valid thermodynamic window.
+                # Keep the last valid cached state instead of crashing the entire solve step.
+                return
+            self._fluid_pressure_cache = pressure
+            self._fluid_temp_cache = temperature
 
     def record_to_arrays_jit(self, pressure_history, temp_history, mdot_history, velocity_history, iteration):
         """Record this cell's current state into the solver's preallocated arrays."""
@@ -150,8 +185,8 @@ class systemComponentJIT:
     def setPressureIn(self, pressureIn):
         """Set the inlet pressure and sync the pyfluids fluid state to match it."""
         self.pressureIn = pressureIn
-        if self.fluid:
-            self.fluid.update(Input.pressure(self.pressureIn), Input.temperature(self.temp))
+        if self.fluid is not None:
+            self._sync_fluid_state(self.pressureIn, self.temp)
 
     def getPressureOut(self):
         """Return the outlet pressure of the component."""
@@ -160,14 +195,15 @@ class systemComponentJIT:
     def setPressureOut(self, pressureOut):
         """Set the outlet pressure and sync the pyfluids fluid state to match it."""
         self.pressureOut = pressureOut
-        if self.fluid:
-            self.fluid.update(Input.pressure(self.pressureOut), Input.temperature(self.temp))
+        if self.fluid is not None:
+            self._sync_fluid_state(self.pressureOut, self.temp)
 
     def update(self, nextPressure=None):
         """Refresh the cached fluid properties from the current component state."""
-        self.fluid.update(Input.temperature(self.temp), Input.pressure(self.pressureIn))
-        self.rho = self.fluid.density
-        self.viscosity = self.fluid.dynamic_viscosity
+        if self.fluid is not None:
+            self._sync_fluid_state(self.pressureIn, self.temp)
+            self.rho = self.fluid.density
+            self.viscosity = self.fluid.dynamic_viscosity
 
         if nextPressure:
             self.pressureOut = nextPressure

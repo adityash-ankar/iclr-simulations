@@ -10,7 +10,7 @@ module is designed to work inside FeedSystemCriticalPath and uses JIT
 utility functions from util_funcs for the core physics kernels.
 """
 
-import numpy as np
+import numpy as np  # noqa: I001
 from pyfluids import Fluid, Input
 from scipy.optimize import root_scalar
 from util_funcs import *
@@ -33,8 +33,9 @@ class OrificeJIT(systemComponentJIT):
     updated local pressures (pressureOut). Use within the FeedSystem
     controller where solveMdot/solve methods are called each timestep.
     """
-    def __init__(self, fluid: Fluid, OD=0.05, ID=0.04, location=0, pos=None, pressureIn=0, pressureOut=0,
-                 temp=None, rho=None, mdot=None, l=0.01, CdA=None, type='o'):
+    def __init__(self, fluid: Fluid | None, OD: float = 0.05, ID: float = 0.04, location: int = 0,
+                 pos=None, pressureIn: float = 0.0, pressureOut: float = 0.0,
+                 temp=None, rho=None, mdot=None, l: float = 0.01, CdA=None, type: str = 'o'):
         """Create an orifice restriction with a configurable discharge coefficient area.
 
         Parameters
@@ -141,7 +142,7 @@ class OrificeJIT(systemComponentJIT):
             self.mdot = mdot
 
         if self.fluid:
-            self.fluid.update(Input.pressure(pressureIn), Input.temperature(self.temp))
+            self.fluid.update(Input.pressure(float(pressureIn)), Input.temperature(float(self.temp or 0.0)))
             self.rho = self.fluid.density
 
         return orifice_dp_jit(self.mdot, self.CdA, self.rho)
@@ -183,16 +184,56 @@ class OrificeJIT(systemComponentJIT):
         if outletPressure is None:
             outletPressure = self.pressureOut
 
-        targetDp = inletPressure - outletPressure
+        targetDp = abs(float(inletPressure) - float(outletPressure))
+        if targetDp <= 0.0:
+            self.mdot = 0.0
+            return
 
-        def dpFunc(mdot):
-            return self.dp(mdot=mdot) - targetDp
+        direction = 1.0 if float(inletPressure) >= float(outletPressure) else -1.0
 
-        try:
-            result = root_scalar(dpFunc, bracket=[-100, 100], method='brentq')
-            self.mdot = result.root
-        except Exception as exc:
-            raise ValueError("Failed to find mass flow rate") from exc
+        def dpFunc(mdot_mag):
+            mdot_mag = float(mdot_mag)
+            if not np.isfinite(mdot_mag) or mdot_mag <= 0.0:
+                return 1e30
+            return self.dp(mdot=mdot_mag) - targetDp
+
+        brackets_to_try = [[1e-9, 1e-3], [1e-4, 1e-1], [1e-3, 1.0], [1e-2, 10.0], [1e-2, 100.0], [1e-3, 1000.0]]
+
+        root_value: float | None = None
+        for bracket in brackets_to_try:
+            try:
+                lo, hi = bracket
+                f_lo = dpFunc(lo)
+                f_hi = dpFunc(hi)
+                if not np.isfinite(f_lo) or not np.isfinite(f_hi):
+                    continue
+                if f_lo == 0.0:
+                    root_value = float(lo)
+                    break
+                if f_hi == 0.0:
+                    root_value = float(hi)
+                    break
+                if f_lo * f_hi < 0:
+                    result = root_scalar(dpFunc, bracket=bracket, method='brentq')
+                    if result.converged:
+                        root_value = float(result.root)
+                        break
+            except ValueError:
+                continue
+
+        if root_value is None:
+            candidates = np.geomspace(1e-9, 1e3, 400)
+            best_value = None
+            best_mdot = 0.0
+            for cand in candidates:
+                val = abs(dpFunc(cand))
+                if best_value is None or val < best_value:
+                    best_value = val
+                    best_mdot = float(cand)
+            self.mdot = direction * best_mdot
+            return
+
+        self.mdot = direction * root_value
 
     def setMdot(self, mdot):
         """Set the mass flow rate on the orifice without modifying its geometry.
@@ -244,7 +285,8 @@ class OrificeJIT(systemComponentJIT):
             self.iteration += 1
             if self.iteration in self.CdA_dict:
                 self.CdA = self.CdA_dict[self.iteration]
-            prevCell.velfromMdot(self.mdot, self.rho)
+            if prevCell is not None:
+                prevCell.velfromMdot(self.mdot, self.rho)
 
         if nextCell is not None:
             nextCell.setPressureIn(self.pressureOut)
