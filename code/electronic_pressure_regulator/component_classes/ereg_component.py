@@ -265,12 +265,6 @@ class EregJIT(systemComponentJIT):
             self.update()
             self.pressureOut = self.pressureIn - self.dp()
             self.getVelocity()
-            if self.dynamic:
-                self.iteration += 1
-                if self.iteration in self.CdA_dict:
-                    self.CdA = self.CdA_dict[self.iteration]
-                if prevCell is not None:
-                    prevCell.velfromMdot(self.mdot, self.rho)
 
             if nextCell is not None:
                 nextCell.setPressureIn(self.pressureOut)
@@ -341,12 +335,13 @@ class EregJIT(systemComponentJIT):
 
         direction = 1.0 if float(inletPressure or 0.0) >= float(outletPressure or 0.0) else -1.0
 
-        def dp_func(mdot_mag):
-            return self.dp(mdot=float(mdot_mag)) - target_dp
+        def dp_func(theta):
+            return self.dp(valve_angle=theta) - target_dp
 
-        result = root_scalar(dp_func, bracket=[1e-9, 1e3], method="brentq")
+        result = root_scalar(dp_func, bracket=[0,90], method="brentq")
         if result.converged:
-            self.mdot = direction * float(result.root)
+            self.theta = float(result.root)
+            self.mdot = np.sqrt(target_dp * 2 * self.rho * (self.thetaToCd(self.theta) * np.pi * (3e-3)**2)**2)
 
     def solveMdotIter(self, inletPressure=None, outletPressure=None):
         """Compatibility wrapper for the feed-system mass-flow update."""

@@ -145,7 +145,8 @@ def orifice_dp_jit(mdot, cd_a, rho):
     """
     if abs(rho) < 1e-10 or abs(cd_a) < 1e-10:
         return 0.0
-    return (((mdot*abs(mdot)) / (cd_a**2)) )/ (2 * rho)
+    return ((mdot*abs(mdot)) / (cd_a**2) )/ (2 * rho)
+
 
 @njit
 def clamp_value(value, min_val, max_val):
