@@ -3,8 +3,10 @@
 
 disp('Initializing MATLAB...');
 
-% 1. Define the absolute path to your data file
-% REPLACE this path with the actual folder where you keep the .mat file
+open_system('feed_system_harness.slx')
+addpath(genpath(pwd()))
+% 1. Define the absolute path to data file
+
 fluidDataPath = fullfile(pwd,'simscape_fluids_data.mat');
 
 % 2. Check if the file exists and load it
@@ -15,3 +17,9 @@ else
     warning('startup.m: Could not find simscape_fluids_data.mat.');
     disp(['Expected location: ', fluidDataPath]);
 end
+
+% 3. Placeholder simulation parameters
+
+n2TankBlockPressure = 300e+05;
+fuelTankBlockPressure = 60e+05;
+fuelEregInletBlockTemperature = 300;
