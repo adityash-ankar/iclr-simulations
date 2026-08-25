@@ -12,7 +12,7 @@ fluidDataPath = fullfile(pwd,'simscape_fluids_data.mat');
 % 2. Check if the file exists and load it
 if isfile(fluidDataPath)
     load(fluidDataPath);
-    disp('-> Success: Loaded Simscape Nitrogen and Ethanol properties.');
+    disp('-> Success: Loaded Simscape Fluid properties.');
 else
     warning('startup.m: Could not find simscape_fluids_data.mat.');
     disp(['Expected location: ', fluidDataPath]);

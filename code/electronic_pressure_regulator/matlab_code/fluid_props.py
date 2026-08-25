@@ -236,7 +236,7 @@ if __name__ == "__main__":
     # =========================================================================
     print("Fluid: Nitrogen processing using thermo...")
 
-    n2_temperatures = np.arange(-100.0, 101.0, 1.0)  # degC
+    n2_temperatures = np.arange(-100.0, 201.0, 1.0)  # degC
 
     n2_spec_enthalpy = np.empty_like(n2_temperatures)
     n2_spec_heat = np.empty_like(n2_temperatures)
