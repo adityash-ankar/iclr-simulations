@@ -3,7 +3,7 @@
 
 disp('Initializing MATLAB...');
 
-open_system('feed_system_harness.slx')
+open_system('feed_system_harness_fuel.slx')
 addpath(genpath(pwd()))
 % 1. Define the absolute path to data file
 
