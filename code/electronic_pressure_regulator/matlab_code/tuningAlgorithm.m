@@ -3,7 +3,7 @@ function [bestKp, bestKc, tuningStruct] = tuningAlgorithm(maxIter, KpDiv, KcDiv,
     set_param(modelName, 'SimulationMode','Accelerator')
     a = KpDiv;
     b = KcDiv;
-    KpArray = linspace(1e+01, 1e+03, a);
+    KpArray = linspace(15, 1e+03, a);
     KcArray = linspace(0.05, 0.5, b);
 
     tuningStruct = cell(maxIter, 1);   
@@ -62,7 +62,9 @@ function [logsOut, ndError] = runHarness(Kp, Kc, modelName)
     fprintf('Running with Kp = %d\n', Kp)
     fprintf('Running with Kc = %0.2f\n', Kc)
     set_param(strcat(modelName, '/CdA Correction Factor'), 'Value', string(Kc));
-    set_param(strcat(modelName, '/Kp'), 'Value', string(Kp));
+    % set_param(strcat(modelName, '/Kp'), 'Value', string(Kp));
+    Kp2 = Kp;
+    Kp1 = min(Kp2, 10);
     simOut = sim(modelName);
     logsOut = simOut.get('logsout');
     ndError = logsOut.get('NonDim Error').Values.Data(end);
