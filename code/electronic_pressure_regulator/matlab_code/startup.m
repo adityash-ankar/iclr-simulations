@@ -23,3 +23,8 @@ end
 n2TankBlockPressure = 300e+05;
 fuelTankBlockPressure = 60e+05;
 fuelEregInletBlockTemperature = 300;
+
+
+%4. Initialise Variables into workspace
+mainValveTime = 2; %s
+eregValveDelay = 2e-03; %s
