@@ -1,12 +1,10 @@
 % startup.m
 % Runs automatically when MATLAB is launched
-
 disp('Initializing MATLAB...');
-
 open_system('feed_system_harness_fuel.slx')
 addpath(genpath(pwd()))
-% 1. Define the absolute path to data file
 
+% 1. Define the absolute path to data file
 fluidDataPath = fullfile(pwd,'simscape_fluids_data.mat');
 
 % 2. Check if the file exists and load it
@@ -18,13 +16,5 @@ else
     disp(['Expected location: ', fluidDataPath]);
 end
 
-% 3. Placeholder simulation parameters
-
-n2TankBlockPressure = 300e+05;
-fuelTankBlockPressure = 60e+05;
-fuelEregInletBlockTemperature = 300;
-
-
-%4. Initialise Variables into workspace
-mainValveTime = 2; %s
-eregValveDelay = 2e-03; %s
+% 3. Initialise Variables into workspace
+simVariables
