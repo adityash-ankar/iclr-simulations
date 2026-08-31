@@ -1,0 +1,11 @@
+ALL UNITS IN SI,,Notes
+Material,AlSi10Mg,"AlSi10Mg, Inconel718, ABD900"
+Channel Height,0.0015,
+Arc Angle,3.8,In Degrees
+Number of Channels,50,
+Firewall Thickness,0.0007,
+Feed Pressure,4000000,
+Fuel Mass Flow Rate ,0.751,Not Including Film Cooling
+Film Cooling,0.226,
+Nozzle Throat Temperature,2903.57,RPA>Chamber Performance>Thermodynamic Properties
+Chamber Pressure,3180000,
