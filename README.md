@@ -1,6 +1,6 @@
 # iclr_simulations
 
-Contains internal development code for Imperial College London Rocketry Simulations
+Contains internal development code for Imperial College London Rocketry Simulations, repo based off a public cookiecutter
 
 ## Project Organisation
 
