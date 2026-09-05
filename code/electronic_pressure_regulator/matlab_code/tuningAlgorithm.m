@@ -122,8 +122,8 @@ function [logsOut, ndError, simError] = runHarness(paramStruct, modelName)
     try
         simOut  = sim(modelName);
         logsOut = simOut.get('logsout');
-        ndCommandError = logsOut.get('NonDim Command Error').Values.Data(end);
-        ndSetpointError = logsOut.get('NonDim Setpoint Error').Values.Data(end);
+        ndCommandError = logsOut.get('NonDim Command Error Fuel').Values.Data(end);
+        ndSetpointError = logsOut.get('NonDim Setpoint Error Fuel').Values.Data(end);
         ndError = abs(ndSetpointError);
     catch ME
         simError = ME;

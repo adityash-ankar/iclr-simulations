@@ -17,4 +17,5 @@ else
 end
 
 % 3. Initialise Variables into workspace
-simVariables
+simVariables;
+CdARelationship;
