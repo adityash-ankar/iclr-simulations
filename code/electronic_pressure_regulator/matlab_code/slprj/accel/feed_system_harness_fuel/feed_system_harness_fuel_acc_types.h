@@ -1,0 +1,4 @@
+#ifndef feed_system_harness_fuel_acc_types_h_
+#define feed_system_harness_fuel_acc_types_h_
+typedef struct P_feed_system_harness_fuel_T_ P_feed_system_harness_fuel_T ;
+#endif

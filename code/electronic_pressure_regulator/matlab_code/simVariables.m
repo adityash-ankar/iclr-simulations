@@ -6,16 +6,16 @@ eregValveDelay = 0;
 % eregHardStop = 45; %deg
 %% Gains 
 %Fuel
-Kp1Fuel = 1; 
-Kp2Fuel = 16;
-KpRampTimeFuel = 3.5; %s
+Kp1Fuel = 0.1; 
+Kp2Fuel = 0.1;
+KpRampTimeFuel = 2; %s
 KcFuel = 1;
 
 %Ox
-Kp1Ox = 100; 
-Kp2Ox = 1000;
+Kp1Ox = 1; 
+Kp2Ox = 16;
 KpRampTimeOx = 3.5; %s
-KcOx = 1.5;
+KcOx = 1;
 %% Pressure Settings
 % Nitrogen 
 nitrogenPressure = 300; %bar    
@@ -32,17 +32,15 @@ oxSetpoint = 45; %bar
 oxSetpoint = oxSetpoint * 1e+05; %Pa
 oxRho = 963; %kg/m^3
 oxMdot = 2.35; %kg/s
-oxFillMass = 6; %kg
+oxFillMass = 20; %kg
 
 OFRatio = oxMdot/fuelMdot;
 %% Valve Properties
 % Fuel 
-fuelClose = 88;
-fuelOpen = 140;
+fuelClose    = 95;
+fuelOpen     = 140;
 fuelCracking = 108;
 
-% Ox
-oxClose = 14;
-oxOpen = 65;
-oxCracking = 34;
-
+oxClose    = 0;
+oxOpen     = 45;
+oxCracking = 13;
