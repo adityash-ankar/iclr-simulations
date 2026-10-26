@@ -12,7 +12,7 @@ Contains internal development code for Imperial College London Rocketry Simulati
 │   ├── processed      <- The final, canonical data sets for modeling.
 │   └── raw            <- The original, immutable data dump.
 │
-├── models             <- Trained and serialized models, model predictions, or model summaries
+├── code             <- Development code
 │
 ├── notebooks          <- Jupyter notebooks. Naming convention is a number (for ordering),
 │                         the creator's initials, and a short `-` delimited description, e.g.

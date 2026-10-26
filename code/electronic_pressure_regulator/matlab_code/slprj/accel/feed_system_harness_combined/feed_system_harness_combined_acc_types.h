@@ -1,0 +1,5 @@
+#ifndef feed_system_harness_combined_acc_types_h_
+#define feed_system_harness_combined_acc_types_h_
+typedef struct P_feed_system_harness_combined_T_
+P_feed_system_harness_combined_T ;
+#endif
